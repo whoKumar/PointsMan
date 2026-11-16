@@ -1,0 +1,31 @@
+{
+  "name": "pointsman",
+  "version": "0.1.0",
+  "description": "A guardrail gate for building software with AI coding agents. Scaffold the rules into a repo, then check the repo follows them — like ESLint, but for your agent setup. Zero dependencies.",
+  "bin": {
+    "pointsman": "bin/pointsman.js"
+  },
+  "type": "commonjs",
+  "files": [
+    "bin",
+    "src",
+    "templates"
+  ],
+  "scripts": {
+    "check": "node bin/pointsman.js check"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "coding-agent",
+    "ai-coding",
+    "guardrails",
+    "cli",
+    "lint",
+    "ci"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
