@@ -1,6 +1,6 @@
 {
   "name": "pointsman",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A guardrail gate for building software with AI coding agents. Two gates: scaffold + check the agent setup (like ESLint for your agent setup), and an impact-aware review of each diff with living QA test cases. Zero-dependency, model-free core.",
   "bin": {
     "pointsman": "bin/pointsman.js"
