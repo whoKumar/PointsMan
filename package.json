@@ -1,7 +1,7 @@
 {
   "name": "pointsman",
   "version": "0.1.0",
-  "description": "A guardrail gate for building software with AI coding agents. Scaffold the rules into a repo, then check the repo follows them — like ESLint, but for your agent setup. Zero dependencies.",
+  "description": "A guardrail gate for building software with AI coding agents. Two gates: scaffold + check the agent setup (like ESLint for your agent setup), and an impact-aware review of each diff with living QA test cases. Zero-dependency, model-free core.",
   "bin": {
     "pointsman": "bin/pointsman.js"
   },
@@ -9,10 +9,14 @@
   "files": [
     "bin",
     "src",
-    "templates"
+    "templates",
+    "docs",
+    "examples"
   ],
   "scripts": {
-    "check": "node bin/pointsman.js check"
+    "check": "node bin/pointsman.js check",
+    "review": "node bin/pointsman.js review",
+    "tests": "node bin/pointsman.js tests"
   },
   "keywords": [
     "ai",
@@ -20,6 +24,10 @@
     "coding-agent",
     "ai-coding",
     "guardrails",
+    "code-review",
+    "diff",
+    "test-cases",
+    "qa",
     "cli",
     "lint",
     "ci"

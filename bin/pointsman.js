@@ -2,17 +2,23 @@
 /**
  * pointsman — a guardrail gate for building software with AI coding agents.
  *
- *   pointsman init    copy the guardrail templates into this project
- *   pointsman check   check this project has the guardrails (pass/fail; CI-friendly)
- *   pointsman help    show usage
+ *   pointsman init     copy the guardrail templates into this project
+ *   pointsman check    check this project has the guardrails (pass/fail; CI-friendly)
+ *   pointsman review   impact-aware review of the current diff (deterministic; model optional)
+ *   pointsman tests    seed / drift-check a living QA test sheet
+ *   pointsman help     show usage
  *
- * Zero dependencies — pure Node, so `npx pointsman` just works.
+ * The core (init / check / deterministic review) has zero dependencies and uses
+ * no model — pure Node, so `npx pointsman` just works. The semantic review layer
+ * is an optional add-on you enable with your own model API key.
  */
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
 const { runChecks } = require("../src/checks");
+const { review } = require("../src/review");
+const { tests } = require("../src/tests");
 
 const ROOT = path.resolve(__dirname, "..");
 const TEMPLATES = path.join(ROOT, "templates");
@@ -30,13 +36,24 @@ ${paint("pointsman", C.bold)} — a guardrail gate for building with AI coding a
 ${paint("Usage", C.bold)}
   npx pointsman <command>
 
-${paint("Commands", C.bold)}
-  ${paint("init", C.cyan)}    Copy the guardrail templates into the current project
-  ${paint("check", C.cyan)}   Check the current project has the guardrails (exit 1 on a failed gate)
-  ${paint("help", C.cyan)}    Show this message
+${paint("Set-up gate", C.bold)} ${paint("(zero-dep, no model)", C.dim)}
+  ${paint("init", C.cyan)}     Copy the guardrail templates into the current project
+  ${paint("check", C.cyan)}    Check the current project has the guardrails (exit 1 on a failed gate)
+
+${paint("Change gate", C.bold)} ${paint("(reads git diff; deterministic core, model optional)", C.dim)}
+  ${paint("review", C.cyan)}   Impact-aware review of the current change (secrets, value paths, silent failures)
+  ${paint("tests", C.cyan)}    Seed a living QA test sheet and flag areas a change may have drifted
+
+  ${paint("help", C.cyan)}     Show this message
+
+${paint("Flags", C.bold)}
+  review [range]   e.g. ${paint("pointsman review main..HEAD", C.dim)}   (default: uncommitted vs HEAD)
+  review --staged  review staged changes
+  review --gate    exit 1 on a 🔴 blocking finding (auto-on when CI is set)
 
 ${paint("In CI", C.bold)} (e.g. a GitHub Action step)
-  npx pointsman check
+  npx pointsman check        ${paint("# the set-up gate", C.dim)}
+  npx pointsman review --gate ${paint("# the change gate", C.dim)}
 `);
 }
 
@@ -97,6 +114,9 @@ function check() {
 }
 
 const cmd = (process.argv[2] || "help").toLowerCase();
+const rest = process.argv.slice(3);
 if (cmd === "init") init();
 else if (cmd === "check") check();
+else if (cmd === "review") review(process.cwd(), rest);
+else if (cmd === "tests") tests(process.cwd(), rest);
 else help();

@@ -1,0 +1,7 @@
+ID,Area,Title,Preconditions,Steps,Expected Result,Priority,Anchor (code/rule),Status,Source,Confidence,Last Updated
+TC-001,Auth,Valid login,"Registered user, app on login screen","1. Enter valid email 2. Enter valid password 3. Tap Sign in",User reaches the home screen; session token stored,High,src/auth/login.ts:42,active,generated,high,2026-11-17
+TC-002,Auth,Wrong password,Registered user,"1. Enter valid email 2. Enter wrong password 3. Tap Sign in",Inline error shown; user stays on login; no token stored,High,src/auth/login.ts:58,active,generated,high,2026-11-17
+TC-003,Auth,Offline login attempt,Device has no network,"1. Enter valid credentials 2. Tap Sign in",Clear ""no connection"" message; retry offered; nothing submitted,Medium,src/net/online.ts:20,active,generated,medium,2026-11-17
+TC-004,Scoring,Correct answer scores full,"In a graded question, answer is correct","1. Submit the correct answer",Score recorded as full value for that item; total updates after save confirms,High,src/game/score.ts:110,stale,updated,high,2026-11-17
+TC-005,Scoring,Grader unavailable,Marking service is unreachable,"1. Submit an answer 2. Marking call fails",Item left UNMARKED (not 0); retry shown; user not penalised for the outage,High,rule:no-silent-zero-on-failure,active,updated,high,2026-11-17
+TC-006,Save,Result shown only after save,Any answered question,"1. Answer 2. Observe result reveal",Result/coins appear only after the server confirms the save (201),High,src/game/save-gate.ts:14,active,generated,medium,2026-11-17
