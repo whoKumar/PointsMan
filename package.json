@@ -25,6 +25,14 @@
     "ci"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whoKumar/PointsMan.git"
+  },
+  "homepage": "https://github.com/whoKumar/PointsMan#readme",
+  "bugs": {
+    "url": "https://github.com/whoKumar/PointsMan/issues"
+  },
   "engines": {
     "node": ">=18"
   }

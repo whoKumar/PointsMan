@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 316" width="760" height="316" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" role="img" aria-label="Terminal running: npx pointsman check — 3 required gates pass, 2 recommended warnings, gate open">
+  <style>
+    .r  { animation: rise .45s ease both; }
+    @keyframes rise { from { opacity: 0; } to { opacity: 1; } }
+    .cur { animation: blink 1.1s steps(1,end) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .r { animation: none; } .cur { animation: none; }
+    }
+  </style>
+
+  <!-- window -->
+  <rect x="0.5" y="0.5" width="759" height="315" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <!-- title bar -->
+  <circle cx="26" cy="20" r="6" fill="#ff5f56"/>
+  <circle cx="48" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="70" cy="20" r="6" fill="#28c840"/>
+  <text x="380" y="25" text-anchor="middle" font-size="13" fill="#8b949e">pointsman — guardrail gate</text>
+  <line x1="0" y1="41" x2="760" y2="41" stroke="#30363d"/>
+
+  <!-- body -->
+  <g font-size="15">
+    <!-- command -->
+    <text class="r" style="animation-delay:.15s" y="80">
+      <tspan x="28" fill="#58a6ff">$</tspan><tspan fill="#c9d1d9"> npx pointsman check</tspan>
+    </text>
+
+    <!-- required: pass -->
+    <text class="r" style="animation-delay:.6s" y="118">
+      <tspan x="28" fill="#3fb950">✓</tspan><tspan x="52" fill="#c9d1d9">agent manual present</tspan><tspan x="470" fill="#6e7681">CLAUDE.md</tspan>
+    </text>
+    <text class="r" style="animation-delay:.85s" y="148">
+      <tspan x="28" fill="#3fb950">✓</tspan><tspan x="52" fill="#c9d1d9">human-approval gate</tspan><tspan x="470" fill="#6e7681">deploy · publish · delete</tspan>
+    </text>
+    <text class="r" style="animation-delay:1.1s" y="178">
+      <tspan x="28" fill="#3fb950">✓</tspan><tspan x="52" fill="#c9d1d9">secrets kept out of git</tspan><tspan x="470" fill="#6e7681">.gitignore</tspan>
+    </text>
+
+    <!-- recommended: warn -->
+    <text class="r" style="animation-delay:1.35s" y="208">
+      <tspan x="28" fill="#d29922">!</tspan><tspan x="52" fill="#8b949e">decision log</tspan><tspan x="470" fill="#6e7681">recommended</tspan>
+    </text>
+    <text class="r" style="animation-delay:1.6s" y="238">
+      <tspan x="28" fill="#d29922">!</tspan><tspan x="52" fill="#8b949e">api-contract convention</tspan><tspan x="470" fill="#6e7681">recommended</tspan>
+    </text>
+
+    <!-- summary -->
+    <g class="r" style="animation-delay:2.1s">
+      <text y="280" font-size="15" font-weight="600">
+        <tspan x="28" fill="#3fb950">3 required passed</tspan><tspan fill="#6e7681"> · </tspan><tspan fill="#3fb950">gate OPEN</tspan>
+      </text>
+      <rect class="cur" x="307" y="267" width="9" height="17" fill="#3fb950"/>
+    </g>
+  </g>
+</svg>

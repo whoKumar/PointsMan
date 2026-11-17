@@ -4,6 +4,10 @@
 Scaffold the rules into a repo, then check the repo follows them — like ESLint,
 but for your *agent setup*. Zero dependencies, no model, no server, no cost.
 
+<p align="center">
+  <img src="assets/pointsman-check.svg" alt="npx pointsman check — 3 required gates pass, 2 recommended warnings, gate open" width="680">
+</p>
+
 ```bash
 npx pointsman init     # add the guardrail files to your project
 npx pointsman check    # pass/fail — run it in CI to block unsafe changes
