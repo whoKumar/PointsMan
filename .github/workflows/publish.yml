@@ -1,0 +1,31 @@
+name: publish
+
+# Publishes pointsman to npm via npm Trusted Publishing (OIDC) — no token needed.
+# Trigger: push a version tag (created by `npm version patch`), or run manually.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # REQUIRED: lets npm trust this workflow via OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs a recent npm (>= 11.5.1)
+      - run: npm install -g npm@latest
+
+      # No NODE_AUTH_TOKEN — OIDC handles auth. --provenance adds a verified
+      # "built from this repo" attestation on the npm page.
+      - run: npm publish --provenance --access public
