@@ -44,7 +44,10 @@ ${paint("In CI", C.bold)} (e.g. a GitHub Action step)
 function copyTree(from, to, report) {
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
     const src = path.join(from, entry.name);
-    const dst = path.join(to, entry.name);
+    // npm strips a file literally named ".gitignore" from the published tarball,
+    // so the template ships as "gitignore" and is restored to ".gitignore" here.
+    const outName = entry.name === "gitignore" ? ".gitignore" : entry.name;
+    const dst = path.join(to, outName);
     if (entry.isDirectory()) {
       fs.mkdirSync(dst, { recursive: true });
       copyTree(src, dst, report);
