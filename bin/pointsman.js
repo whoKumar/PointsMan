@@ -47,12 +47,19 @@ ${paint("Change gate", C.bold)} ${paint("(reads git diff; deterministic core, mo
   ${paint("help", C.cyan)}     Show this message
 
 ${paint("Flags", C.bold)}
-  review [range]   e.g. ${paint("pointsman review main..HEAD", C.dim)}   (default: uncommitted vs HEAD)
-  review --staged  review staged changes
-  review --gate    exit 1 on a 🔴 blocking finding (auto-on when CI is set)
+  review [range]    e.g. ${paint("pointsman review main..HEAD", C.dim)}   (default: uncommitted vs HEAD)
+  review --staged   review staged changes
+  review --all      scan the whole project, not just a diff (deterministic)
+  review --gate     exit 1 on a 🔴 blocking finding (auto-on when CI is set)
+  review --llm      also run the semantic rules through a model (needs your key)
+  tests --inventory map the whole-project test surface (areas that need cases)
+
+${paint("Semantic layer", C.bold)} ${paint("(optional — your key, your account, your cost)", C.dim)}
+  export ANTHROPIC_API_KEY=sk-ant-...   ${paint("# enable --llm", C.dim)}
+  export POINTSMAN_MODEL=claude-...      ${paint("# optional: override the model", C.dim)}
 
 ${paint("In CI", C.bold)} (e.g. a GitHub Action step)
-  npx pointsman check        ${paint("# the set-up gate", C.dim)}
+  npx pointsman check         ${paint("# the set-up gate", C.dim)}
   npx pointsman review --gate ${paint("# the change gate", C.dim)}
 `);
 }
@@ -117,6 +124,6 @@ const cmd = (process.argv[2] || "help").toLowerCase();
 const rest = process.argv.slice(3);
 if (cmd === "init") init();
 else if (cmd === "check") check();
-else if (cmd === "review") review(process.cwd(), rest);
+else if (cmd === "review") review(process.cwd(), rest).catch((e) => { console.error(String(e && e.message || e)); process.exit(2); });
 else if (cmd === "tests") tests(process.cwd(), rest);
 else help();

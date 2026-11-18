@@ -18,7 +18,13 @@ npx pointsman check      # pass/fail — run it in CI to block unsafe setups
 
 # change gate — what does this change actually do?
 npx pointsman review     # impact-aware review of the current diff
+npx pointsman review --all   # …or scan the whole project, not just a diff
 npx pointsman tests      # seed / drift-check a living QA test sheet
+npx pointsman tests --inventory   # map the whole-project test surface
+
+# optional semantic layer — your own model key, your cost
+export ANTHROPIC_API_KEY=sk-ant-...
+npx pointsman review --llm   # also run the rules a regex can't judge
 ```
 
 ---
@@ -73,7 +79,9 @@ Recommended (warn):
 
 `pointsman review` reads `git diff` and classifies the change by impact
 (`security · scoring/money · data · behaviour · cosmetic`), with a `file:line`
-anchor and a `verified` label on every finding.
+anchor and a `verified` label on every finding. Pass `--all` to run the same
+detectors over the **whole project** instead of a diff — a one-shot audit /
+baseline, and the surface the model layer scopes against.
 
 **Deterministic layer — zero-dep, always on** (these are the headline failures of
 fast, agent-written code):
@@ -84,15 +92,19 @@ fast, agent-written code):
 
 `--gate` (auto-on in CI) exits 1 on any 🔴. See [`examples/review.example.md`](examples/review.example.md).
 
-**Semantic layer — optional, your model key.** The rules a regex can't judge
-(behaviour hidden in a "UI" commit, API drift after a dependency bump, a fix
-reversed by a later commit) are left to an optional model pass — one key, from an
-env var, never committed. The core never depends on it. See
+**Semantic layer — optional, your model key (`--llm`).** The rules a regex can't
+judge (behaviour hidden in a "UI" commit, API drift after a dependency bump, a fix
+reversed by a later commit) are left to an optional model pass. Turn it on with
+`--llm` and your own key from an env var (`ANTHROPIC_API_KEY`, model overridable
+with `POINTSMAN_MODEL`) — your account, your cost, and nothing is sent anywhere
+until you pass the flag. The core never depends on it. See
 [`docs/review-and-tests.md`](docs/review-and-tests.md).
 
 `pointsman tests` seeds a human-readable QA sheet (`pointsman-tests.csv`) and, on
 each diff, points at the areas whose cases likely need review — keeping the sheet
-honest as the code changes.
+honest as the code changes. `pointsman tests --inventory` maps the **whole
+project's** test surface, pulling the files on value / failure / secret paths to
+the top so you know where to write cases first.
 
 ## Use it in CI
 
@@ -113,11 +125,12 @@ jobs:
 
 ## Status
 
-Early (v0.1). The **set-up gate** (`init` / `check`) and the **deterministic
-change gate** (`review` / `tests`) are done and dependency-free. The **semantic
-review layer** (the model-powered rules + `verified`/`claimed`) and `.xlsx`
-export of the test sheet are on the roadmap — see
-[`docs/review-and-tests.md`](docs/review-and-tests.md). Ideas, issues, and PRs welcome.
+Early (v0.3). The **set-up gate** (`init` / `check`) and the **deterministic
+change gate** (`review` / `tests`, diff **or** whole-project `--all`) are done and
+dependency-free. The **semantic review layer** is now wired as an opt-in
+(`--llm` + your key); richer per-file fan-out for whole-project model review,
+baseline/suppression, and `.xlsx` export of the test sheet are on the roadmap —
+see [`docs/review-and-tests.md`](docs/review-and-tests.md). Ideas, issues, and PRs welcome.
 
 ## License
 

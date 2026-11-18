@@ -10,7 +10,9 @@
 const fs = require("fs");
 const path = require("path");
 const { collectDiff, parseDiff, isGitRepo } = require("./diff");
+const { collectProject } = require("./scan");
 const { RULES, loadRules, runDeterministic } = require("./rules");
+const { keyPresent, modelName, semanticReview } = require("./llm");
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -25,43 +27,59 @@ const SEV = {
 };
 
 function parseArgs(argv) {
-  const opts = { gate: false, staged: false, range: null };
+  const opts = { gate: false, staged: false, all: false, llm: false, range: null };
   for (const a of argv) {
     if (a === "--gate") opts.gate = true;
     else if (a === "--staged") opts.staged = true;
+    else if (a === "--all") opts.all = true;
     else if (a === "--llm") opts.llm = true;
-    else if (!a.startsWith("-")) opts.range = a; // e.g. main..HEAD
+    else if (a.startsWith("#")) break; // a stray shell comment — ignore it and the rest
+    else if (!a.startsWith("-") && !opts.range) opts.range = a; // first range wins, e.g. main..HEAD
   }
   if (process.env.CI) opts.gate = true;
   return opts;
 }
 
-function review(cwd, argv) {
+async function review(cwd, argv) {
   const opts = parseArgs(argv);
+  const isRepo = isGitRepo(cwd);
 
-  if (!isGitRepo(cwd)) {
+  if (!isRepo && !opts.all) {
     console.log(paint("\npointsman review", C.bold) + "  — not a git repository.");
-    console.log(paint("  Run it inside a repo; review reads `git diff`.\n", C.dim));
+    console.log(paint("  Run it inside a repo, or pass --all to scan the whole folder.\n", C.dim));
     process.exit(2);
   }
 
-  let raw;
-  try { raw = collectDiff(cwd, opts); }
-  catch (e) {
-    console.log(paint("\npointsman review", C.bold) + "  — could not read the diff.");
-    console.log(paint("  " + String(e.message || e).split("\n")[0] + "\n", C.dim));
-    process.exit(2);
+  let parsed, rawForModel = null;
+  if (opts.all) {
+    // Whole-project scan: every line of every reviewable file, no diff needed.
+    try { parsed = collectProject(cwd, isRepo); }
+    catch (e) {
+      console.log(paint("\npointsman review", C.bold) + "  — could not scan the project.");
+      console.log(paint("  " + String(e.message || e).split("\n")[0] + "\n", C.dim));
+      process.exit(2);
+    }
+  } else {
+    try { rawForModel = collectDiff(cwd, opts); }
+    catch (e) {
+      console.log(paint("\npointsman review", C.bold) + "  — could not read the diff.");
+      console.log(paint("  " + String(e.message || e).split("\n")[0] + "\n", C.dim));
+      process.exit(2);
+    }
+    parsed = parseDiff(rawForModel);
   }
 
-  const parsed = parseDiff(raw);
   const cfg = loadRules(cwd, fs, path);
 
-  const scope = opts.range ? opts.range : opts.staged ? "staged changes" : "uncommitted changes vs HEAD";
+  const scope = opts.all
+    ? "whole project"
+    : opts.range ? opts.range : opts.staged ? "staged changes" : "uncommitted changes vs HEAD";
+  const noun = opts.all ? "file(s) scanned" : "file(s) changed";
   console.log(paint("\npointsman review", C.bold) + paint("  " + scope, C.dim));
-  console.log(paint(`  rules: ${cfg.hasFile ? "rules.md" : "built-in defaults (no rules.md)"}  ·  ${parsed.length} file(s) changed`, C.dim));
+  console.log(paint(`  rules: ${cfg.hasFile ? "rules.md" : "built-in defaults (no rules.md)"}  ·  ${parsed.length} ${noun}`, C.dim));
 
   if (!parsed.length) {
-    console.log(paint("\n  No changes to review.\n", C.dim));
+    console.log(paint(opts.all ? "\n  No reviewable files found.\n" : "\n  No changes to review.\n", C.dim));
     return;
   }
 
@@ -95,12 +113,38 @@ function review(cwd, argv) {
   else console.log(paint("    nothing flagged by the deterministic rules", C.dim));
   console.log(paint(`\n  ${blocks} block · ${warns} warn`, C.bold));
 
-  // The optional semantic (LLM) layer — advertised, not run.
+  // The optional semantic (LLM) layer — opt-in with --llm + your own key.
   const llmRules = RULES.filter((r) => r.mode === "llm");
-  console.log(paint("\n  Semantic layer (optional, not run)", C.bold));
-  console.log(paint(`    ${llmRules.length} rules need a model to judge: ${llmRules.map((r) => r.id).join(", ")}`, C.dim));
-  console.log(paint("    These catch behaviour-hidden-in-UI, API drift after a bump, and reversed fixes.", C.dim));
-  console.log(paint("    Wire a model (your API key, from an env var) to enable them — core review stays model-free.", C.dim));
+  if (!opts.llm) {
+    console.log(paint("\n  Semantic layer (optional, not run)", C.bold));
+    console.log(paint(`    ${llmRules.length} rules need a model to judge: ${llmRules.map((r) => r.id).join(", ")}`, C.dim));
+    console.log(paint("    These catch behaviour-hidden-in-UI, API drift after a bump, and reversed fixes.", C.dim));
+    console.log(paint("    Enable with --llm + your own key — core review stays model-free:", C.dim));
+    console.log(paint("      export ANTHROPIC_API_KEY=sk-ant-...   then   pointsman review --llm", C.dim));
+  } else if (!keyPresent()) {
+    console.log(paint("\n  Semantic layer (--llm): no API key found.", C.bold));
+    console.log(paint("    Set your key to run it through a model — your account, your cost, the diff is sent to the model:", C.dim));
+    console.log(paint("      export ANTHROPIC_API_KEY=sk-ant-...        # required to enable", C.dim));
+    console.log(paint("      export POINTSMAN_MODEL=claude-...           # optional: override the model", C.dim));
+    console.log(paint("    Nothing is sent anywhere until a key is set and --llm is passed.", C.dim));
+  } else if (!rawForModel) {
+    console.log(paint("\n  Semantic layer (--llm): runs on a diff, not --all (whole-project model review not wired yet).", C.dim));
+  } else {
+    console.log(paint(`\n  Semantic layer (--llm): asking ${modelName()} to judge ${llmRules.length} rule(s)…`, C.dim));
+    try {
+      const sem = await semanticReview(rawForModel, llmRules);
+      if (!sem.length) {
+        console.log(paint("    model found no additional issues. ✓", C.green));
+      } else {
+        for (const f of sem) {
+          console.log(`  ${paint("🔵 MODEL", C.cyan)} ${paint(f.ruleId || "semantic", C.cyan)} · ${f.note || ""}`);
+          console.log(`      ${paint((f.file || "?") + ":" + (f.line != null ? f.line : "?"), C.bold)}  ${paint("[model]", C.cyan)}  ${paint(f.severity || "", C.dim)}`);
+        }
+      }
+    } catch (e) {
+      console.log(paint("    model layer error: " + String(e.message || e).split("\n")[0], C.yellow));
+    }
+  }
 
   if (opts.gate && blocks > 0) {
     console.log(paint(`\n  Gate: ${blocks} blocking finding(s) — failing.\n`, C.red));

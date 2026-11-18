@@ -13,6 +13,7 @@
 const fs = require("fs");
 const path = require("path");
 const { collectDiff, parseDiff, isGitRepo } = require("./diff");
+const { collectProject } = require("./scan");
 const { loadRules, runDeterministic } = require("./rules");
 
 const C = { reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m", green: "\x1b[32m", cyan: "\x1b[36m", yellow: "\x1b[33m" };
@@ -23,6 +24,7 @@ const HEADER =
   "ID,Area,Title,Preconditions,Steps,Expected Result,Priority,Anchor (code/rule),Status,Source,Confidence,Last Updated";
 
 function tests(cwd, argv) {
+  const inventory = (argv || []).some((a) => a === "--inventory" || a === "--all");
   const sheetPath = path.join(cwd, SHEET);
   console.log(paint("\npointsman tests", C.bold) + paint("  " + sheetPath, C.dim));
 
@@ -33,6 +35,11 @@ function tests(cwd, argv) {
   } else {
     const rows = fs.readFileSync(sheetPath, "utf8").split("\n").filter((l) => l.trim()).length - 1;
     console.log("  " + paint("• found  ", C.dim) + "  " + SHEET + paint(`  (${Math.max(rows, 0)} case(s))`, C.dim));
+  }
+
+  // Inventory mode: map the whole project's test surface, not just the diff.
+  if (inventory) {
+    return surface(cwd, isGitRepo(cwd));
   }
 
   // 2. If in a repo, map the current change to areas that need case review.
@@ -69,6 +76,42 @@ function tests(cwd, argv) {
 
   console.log(paint("\n  Generating / rewriting cases from the change needs the optional model layer.", C.dim));
   console.log(paint("  Edit " + SHEET + " by hand for now, or wire a model to keep it in sync.\n", C.dim));
+}
+
+/**
+ * Whole-project test surface: every reviewable file is an area that needs cases,
+ * with the ones touching value / failure / secret paths pulled to the top.
+ */
+function surface(cwd, isRepo) {
+  let parsed = [];
+  try { parsed = collectProject(cwd, isRepo); } catch { /* ignore */ }
+  if (!parsed.length) {
+    console.log(paint("\n  No reviewable files found.\n", C.dim));
+    return;
+  }
+
+  const cfg = loadRules(cwd, fs, path);
+  const findings = runDeterministic(parsed, cfg);
+  const byFile = {};
+  for (const f of findings) (byFile[f.file] = byFile[f.file] || []).push(f);
+  const riskFiles = Object.keys(byFile);
+
+  console.log(paint("\n  Whole-project test surface", C.bold) + paint(`  (${parsed.length} source file(s))`, C.dim));
+
+  if (riskFiles.length) {
+    console.log(paint("\n  Priority — files on value / failure / secret paths (write cases here first):", C.bold));
+    for (const file of riskFiles) {
+      const cats = [...new Set(byFile[file].map((x) => x.category))].join(", ");
+      console.log(`    ${paint(file, C.cyan)}  ${paint("→ " + cats, C.dim)}`);
+    }
+  }
+
+  const rest = parsed.map((p) => p.file).filter((f) => !byFile[f]);
+  console.log(paint(`\n  ${rest.length} more file(s) need baseline cases:`, C.dim));
+  for (const f of rest.slice(0, 40)) console.log(paint("      " + f, C.dim));
+  if (rest.length > 40) console.log(paint(`      … and ${rest.length - 40} more`, C.dim));
+
+  console.log(paint("\n  Writing the actual cases needs the model layer: ", C.dim) + paint("pointsman review --llm", C.cyan) + paint(" (your key), or let your agent draft them from this surface.\n", C.dim));
 }
 
 module.exports = { tests };

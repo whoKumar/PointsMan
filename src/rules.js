@@ -130,6 +130,12 @@ function addedLines(file) {
   return out;
 }
 
+// A C-style comment line. The behaviour rules describe `catch`/`return` patterns
+// in their own comments and examples — those are prose, not control flow.
+function isCommentLine(text) {
+  return /^\s*(\/\/|\/\*|\*|<!--)/.test(text);
+}
+
 function detectSecrets(file, out) {
   for (const l of addedLines(file)) {
     if (SECRET_FALSE_POSITIVE.test(l.text)) continue;
@@ -141,12 +147,23 @@ function detectSecrets(file, out) {
 
 function detectSilentCatch(file, out) {
   for (const l of addedLines(file)) {
+    if (isCommentLine(l.text)) continue; // a `catch {}` shown in a comment/example is not code
+    const code = l.text.replace(/\/\/.*$/, ""); // drop a trailing line comment before testing
     // Empty catch braces anywhere on the added line (trailing code after the
     // `{}` — e.g. a function's closing brace — is common and must not hide it).
-    if (/catch\s*(\([^)]*\))?\s*\{\s*\}/.test(l.text)) {
+    if (/catch\s*(\([^)]*\))?\s*\{\s*\}/.test(code)) {
       out.push({ ruleId: "no-silent-catch", file: file.file, line: l.lineNo, snippet: l.text.trim() });
     }
   }
+}
+
+// A line we should not treat as a value-path hit: a comment, a bullet, or markup
+// whose only number lives inside a tag (e.g. `<h2>…</h2>`, `<Icon size={12} />`).
+function isNoisyValueLine(text) {
+  const t = text.trim();
+  if (/^(\/\/|\/\*|\*|<!--|#|•)/.test(t)) return true;   // comment / doc / bullet prose
+  if (!/\d/.test(t.replace(/<[^>]*>/g, ""))) return true;  // the digit was only inside a tag
+  return false;
 }
 
 function detectValuePaths(file, out) {
@@ -157,28 +174,50 @@ function detectValuePaths(file, out) {
     if (lines.length) out.push({ ruleId: "guard-value-paths", file: file.file, line: lines[0].lineNo, snippet: lines[0].text.trim() });
     return;
   }
-  // Otherwise, flag a line that both names a value concept and carries a number.
+  // Otherwise, flag a line that both names a value concept and carries a number —
+  // but skip comments and markup, where a keyword + digit is almost always noise.
   for (const l of lines) {
-    if (VALUE_PATH.test(l.text) && /\d/.test(l.text)) {
+    if (VALUE_PATH.test(l.text) && /\d/.test(l.text) && !isNoisyValueLine(l.text)) {
       out.push({ ruleId: "guard-value-paths", file: file.file, line: l.lineNo, snippet: l.text.trim() });
       return; // one finding per file is enough to prompt a look
     }
   }
 }
 
+// Words that mark a line as being about a *value* (a score, a grade, money…).
+const VALUE_WORD = /\b(score|scoring|grade|grading|marks?|credit|points?|reward|accuracy|amount|price|pay|billing|refund|coin)\b/i;
+
+// A failure default is only a finding when it is actual code (a return/assignment)
+// *inside* a catch — not a quoted word in prompt/doc text — AND it defaults a
+// *value*. `catch { return false }` on an existence check is correct, common code
+// and must not be flagged; `catch { return 0 } // score` is the real smell.
+function isSilentZeroLine(text) {
+  // Explicitly value-shaped defaults — always a finding.
+  if (/\bscore\s*[:=]\s*0\b/i.test(text)) return true;
+  if (/\bcorrect\s*[:=]\s*false\b/i.test(text)) return true;
+  if (/\b(?:return|[:=])\s*['"](?:incorrect|wrong|fail(?:ed)?)['"]/i.test(text)) return true;
+  // Generic `return 0` / `return false` — only when the line is about a value,
+  // otherwise it is ordinary control flow (a count, a guard, an existence check).
+  if ((/\breturn\s+0\b/.test(text) || /\breturn\s+false\b/.test(text)) && VALUE_WORD.test(text)) return true;
+  return false;
+}
+
 function detectSilentZero(file, out) {
   for (const h of file.hunks) {
     const added = h.lines.filter((l) => l.kind === "add");
-    const hasCatch = added.some((l) => /\bcatch\b/.test(l.text));
-    if (!hasCatch) continue;
-    const bad = added.find((l) =>
-      /\breturn\s+0\b/.test(l.text) ||
-      /\breturn\s+false\b/.test(l.text) ||
-      /\bscore\s*[:=]\s*0\b/.test(l.text) ||
-      /['"](?:incorrect|wrong|fail(?:ed)?)['"]/i.test(l.text) ||
-      /\bcorrect\s*[:=]\s*false\b/.test(l.text)
-    );
-    if (bad) out.push({ ruleId: "no-silent-zero-on-failure", file: file.file, line: bad.lineNo, snippet: bad.text.trim() });
+    for (let i = 0; i < added.length; i++) {
+      if (isCommentLine(added[i].text)) continue;
+      if (!/\bcatch\b/.test(added[i].text)) continue;
+      // scan the catch line and the next few lines — a catch body that defaults a
+      // result, not a `catch` keyword that merely shares a hunk with the word elsewhere.
+      for (let j = i; j < Math.min(i + 7, added.length); j++) {
+        if (isCommentLine(added[j].text)) continue;
+        if (isSilentZeroLine(added[j].text)) {
+          out.push({ ruleId: "no-silent-zero-on-failure", file: file.file, line: added[j].lineNo, snippet: added[j].text.trim() });
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -196,18 +235,37 @@ function redact(text) {
   ).trim();
 }
 
+// Prose / documentation files: a leaked key in them is real, but the code-pattern
+// rules (silent catch, failure defaults, value paths) only produce noise on prose.
+const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
+function isDocFile(f) { return DOC_EXT.test(f); }
+
 /** Run every enabled deterministic detector over the parsed diff. */
 function runDeterministic(parsed, cfg) {
   const findings = [];
   for (const file of parsed) {
+    const docOnly = isDocFile(file.file);
     for (const rule of RULES) {
       if (rule.mode !== "deterministic") continue;
       if (!cfg.enabled.has(rule.id)) continue;
+      // On docs, only scan for secrets — code-pattern rules don't apply to prose.
+      if (docOnly && rule.id !== "no-hardcoded-secrets") continue;
       DETECTORS[rule.id](file, findings);
     }
   }
+  // De-dupe: the same line can be reached by more than one detector pass
+  // (e.g. two nearby catches windowing onto one `return 0`).
+  const seen = new Set();
+  const unique = [];
+  for (const f of findings) {
+    const key = f.ruleId + "|" + f.file + "|" + f.line;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(f);
+  }
+
   // attach rule metadata + effective severity
-  return findings.map((f) => {
+  return unique.map((f) => {
     const rule = BY_ID[f.ruleId];
     return {
       ...f,
