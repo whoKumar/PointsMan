@@ -48,6 +48,47 @@ const RULES = [
     title: "silent catch swallows an error",
     why: "A catch with no logging hides real failures for weeks.",
   },
+  // ── Security: pattern-detectable, OWASP-style checks (deterministic) ──
+  {
+    id: "no-wildcard-cors-credentials",
+    category: "security",
+    severity: "block",
+    mode: "deterministic",
+    title: "CORS allows any origin with credentials",
+    why: "Allowing any origin together with credentials lets any website make authenticated requests as your signed-in users.",
+  },
+  {
+    id: "no-dangerous-html",
+    category: "security",
+    severity: "warn",
+    mode: "deterministic",
+    title: "raw HTML injected into the page",
+    why: "Rendering unsanitised HTML (dangerouslySetInnerHTML / innerHTML) can run an attacker's script in your users' browsers (XSS).",
+  },
+  {
+    id: "no-token-in-web-storage",
+    category: "security",
+    severity: "warn",
+    mode: "deterministic",
+    title: "auth token kept in web / async storage",
+    why: "A token in localStorage or AsyncStorage can be read by any injected script; prefer an HttpOnly cookie or a secure store.",
+  },
+  {
+    id: "no-debug-in-prod",
+    category: "security",
+    severity: "warn",
+    mode: "deterministic",
+    title: "debug mode left on",
+    why: "Debug mode can leak stack traces, config and internals to anyone who triggers an error.",
+  },
+  {
+    id: "no-eval",
+    category: "security",
+    severity: "warn",
+    mode: "deterministic",
+    title: "eval / new Function on a string",
+    why: "Running a string as code is a direct injection path if any part of it ever comes from user input.",
+  },
   // ── Semantic rules: need the optional LLM layer (not run deterministically) ──
   {
     id: "label-behaviour-change",
@@ -78,31 +119,34 @@ const RULES = [
 const BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r]));
 
 /**
- * Load rule config from a repo's rules.md, if present. The file is prose, so we
- * only read the machine-relevant bits: which rule ids appear, and any
- * `severity:` override. Absent file → built-in defaults (all rules on).
- * Returns { enabled:Set<id>, severity:{id→sev}, hasFile:boolean }.
+ * Load rule config from a repo's rules.md, if present. Opt-OUT model: every
+ * built-in rule runs by default — a guardrail you don't know about can't protect
+ * you — so a new release's rules apply even to a repo that already has a rules.md.
+ * The file only *tunes*: `severity: block|warn|info` overrides a rule, and
+ * `severity: off` disables it. Returns { enabled:Set<id>, severity:{id→sev}, hasFile }.
  */
 function loadRules(cwd, fs, path) {
+  const allIds = RULES.map((r) => r.id);
   const file = path.join(cwd, "rules.md");
   let text = "";
   try { text = fs.readFileSync(file, "utf8"); } catch { /* no file */ }
   if (!text) {
-    return { enabled: new Set(RULES.map((r) => r.id)), severity: {}, hasFile: false };
+    return { enabled: new Set(allIds), severity: {}, hasFile: false };
   }
-  const enabled = new Set();
   const severity = {};
+  const disabled = new Set();
   let lastId = null;
   for (const raw of text.split("\n")) {
     const idm = /^\s*-?\s*id:\s*([a-z0-9-]+)/i.exec(raw);
-    if (idm) { lastId = idm[1]; enabled.add(lastId); continue; }
-    const sm = /^\s*severity:\s*(block|warn|info)/i.exec(raw);
-    if (sm && lastId) severity[lastId] = sm[1].toLowerCase();
+    if (idm) { lastId = idm[1]; continue; }
+    const sm = /^\s*severity:\s*(block|warn|info|off)/i.exec(raw);
+    if (sm && lastId) {
+      const sev = sm[1].toLowerCase();
+      if (sev === "off") disabled.add(lastId);
+      else severity[lastId] = sev;
+    }
   }
-  // If the file names no known ids, fall back to defaults rather than disabling all.
-  if (![...enabled].some((id) => BY_ID[id])) {
-    return { enabled: new Set(RULES.map((r) => r.id)), severity, hasFile: true };
-  }
+  const enabled = new Set(allIds.filter((id) => !disabled.has(id)));
   return { enabled, severity, hasFile: true };
 }
 
@@ -223,11 +267,69 @@ function detectSilentZero(file, out) {
   }
 }
 
+// ── Security detectors (OWASP-style, pattern-based) ──
+
+// CORS: a wildcard origin *together with* credentials is the dangerous combo.
+function detectCorsCredentials(file, out) {
+  const lines = addedLines(file).filter((l) => !isCommentLine(l.text));
+  const text = lines.map((l) => l.text).join("\n");
+  const wildcard = /allow_origins\s*=\s*\[[^\]]*["']\*["']/i.test(text) ||
+    /Access-Control-Allow-Origin["']?\s*[:,]\s*["']\*["']/i.test(text);
+  const creds = /allow_credentials\s*=\s*True/i.test(text) ||
+    /Access-Control-Allow-Credentials["']?\s*[:,]\s*["']?\s*true/i.test(text);
+  if (!wildcard || !creds) return;
+  const anchor = lines.find((l) => /allow_origins|Allow-Origin/i.test(l.text)) || lines[0];
+  out.push({ ruleId: "no-wildcard-cors-credentials", file: file.file, line: anchor.lineNo, snippet: anchor.text.trim() });
+}
+
+function detectDangerousHtml(file, out) {
+  for (const l of addedLines(file)) {
+    if (isCommentLine(l.text)) continue;
+    if (/dangerouslySetInnerHTML\s*[=:]/.test(l.text) || /\.(inner|outer)HTML\s*=/.test(l.text)) {
+      out.push({ ruleId: "no-dangerous-html", file: file.file, line: l.lineNo, snippet: l.text.trim() });
+    }
+  }
+}
+
+function detectTokenInStorage(file, out) {
+  for (const l of addedLines(file)) {
+    if (isCommentLine(l.text)) continue;
+    if (/(localStorage|sessionStorage|AsyncStorage)\s*\.\s*setItem\s*\(/.test(l.text) &&
+        /token|jwt|auth|secret|password|session/i.test(l.text)) {
+      out.push({ ruleId: "no-token-in-web-storage", file: file.file, line: l.lineNo, snippet: l.text.trim() });
+    }
+  }
+}
+
+function detectDebugOn(file, out) {
+  for (const l of addedLines(file)) {
+    if (isCommentLine(l.text)) continue;
+    if (/\bdebug\s*=\s*True\b/.test(l.text) || /\bDEBUG\s*=\s*True\b/.test(l.text) ||
+        /\bdebug\s*:\s*true\b/i.test(l.text) || /\.run\([^)]*debug\s*=\s*True/i.test(l.text)) {
+      out.push({ ruleId: "no-debug-in-prod", file: file.file, line: l.lineNo, snippet: l.text.trim() });
+    }
+  }
+}
+
+function detectEval(file, out) {
+  for (const l of addedLines(file)) {
+    if (isCommentLine(l.text)) continue;
+    if (/\beval\s*\(/.test(l.text) || /\bnew\s+Function\s*\(/.test(l.text)) {
+      out.push({ ruleId: "no-eval", file: file.file, line: l.lineNo, snippet: l.text.trim() });
+    }
+  }
+}
+
 const DETECTORS = {
   "no-hardcoded-secrets": detectSecrets,
   "no-silent-catch": detectSilentCatch,
   "guard-value-paths": detectValuePaths,
   "no-silent-zero-on-failure": detectSilentZero,
+  "no-wildcard-cors-credentials": detectCorsCredentials,
+  "no-dangerous-html": detectDangerousHtml,
+  "no-token-in-web-storage": detectTokenInStorage,
+  "no-debug-in-prod": detectDebugOn,
+  "no-eval": detectEval,
 };
 
 /** Mask the middle of a long literal so findings never echo a full secret. */
