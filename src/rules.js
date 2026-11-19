@@ -36,6 +36,7 @@ const RULES = [
     category: "scoring/money",
     severity: "warn", // deterministic layer can see the edit, not the intent → warn, confirm
     mode: "deterministic",
+    changeOnly: true, // "a value path *changed*" — meaningful on a diff, not a static whole-project scan
     title: "a money / scoring / credit path changed",
     why: "Changes to value paths must be deliberate and called out, not incidental.",
   },
@@ -122,7 +123,8 @@ const SECRET_PATTERNS = [
 ];
 const SECRET_FALSE_POSITIVE = /(process\.env|import\.meta\.env|YOUR_|REPLACE_|EXAMPLE|PLACEHOLDER|<[^>]+>|xxxx|\*\*\*\*|\$\{)/i;
 
-const VALUE_PATH = /(score|scoring|price|pricing|payment|billing|credit|grade|grading|reward|coin|wallet|refund|charge|payable|discount|amount)/i;
+// Word-bounded so "underScores" / "gradeLevel" / "scoreW" don't match on a substring.
+const VALUE_PATH = /\b(score|scoring|price|pricing|payment|billing|credit|grade|grading|reward|coin|wallet|refund|charge|payable|discount|amount)\b/i;
 
 function addedLines(file) {
   const out = [];
@@ -240,14 +242,17 @@ function redact(text) {
 const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
 function isDocFile(f) { return DOC_EXT.test(f); }
 
-/** Run every enabled deterministic detector over the parsed diff. */
-function runDeterministic(parsed, cfg) {
+/** Run every enabled deterministic detector over the parsed diff (or whole project). */
+function runDeterministic(parsed, cfg, opts = {}) {
   const findings = [];
   for (const file of parsed) {
     const docOnly = isDocFile(file.file);
     for (const rule of RULES) {
       if (rule.mode !== "deterministic") continue;
       if (!cfg.enabled.has(rule.id)) continue;
+      // "Did this change?" rules (confirm-the-edit) are meaningless in a static
+      // whole-project scan — nothing changed — so skip them under --all.
+      if (opts.whole && rule.changeOnly) continue;
       // On docs, only scan for secrets — code-pattern rules don't apply to prose.
       if (docOnly && rule.id !== "no-hardcoded-secrets") continue;
       DETECTORS[rule.id](file, findings);
@@ -271,6 +276,7 @@ function runDeterministic(parsed, cfg) {
       ...f,
       category: rule.category,
       title: rule.title,
+      why: rule.why,
       severity: cfg.severity[f.ruleId] || rule.severity,
     };
   });

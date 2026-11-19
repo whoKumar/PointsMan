@@ -74,44 +74,65 @@ async function review(cwd, argv) {
   const scope = opts.all
     ? "whole project"
     : opts.range ? opts.range : opts.staged ? "staged changes" : "uncommitted changes vs HEAD";
-  const noun = opts.all ? "file(s) scanned" : "file(s) changed";
-  console.log(paint("\npointsman review", C.bold) + paint("  " + scope, C.dim));
-  console.log(paint(`  rules: ${cfg.hasFile ? "rules.md" : "built-in defaults (no rules.md)"}  ·  ${parsed.length} ${noun}`, C.dim));
+  const noun = opts.all ? "scanned" : "changed";
+  const rulesLabel = cfg.hasFile ? "rules.md" : "built-in defaults";
+
+  const RULE = "─".repeat(48);
+  console.log("\n  " + paint("pointsman review", C.bold) + paint("  ·  " + scope, C.dim));
+  console.log(paint(`  ${parsed.length} file(s) ${noun} · ${rulesLabel}`, C.dim));
 
   if (!parsed.length) {
     console.log(paint(opts.all ? "\n  No reviewable files found.\n" : "\n  No changes to review.\n", C.dim));
     return;
   }
 
-  const findings = runDeterministic(parsed, cfg);
-
-  // Group by severity: block, warn, info
+  const findings = runDeterministic(parsed, cfg, { whole: opts.all });
   const order = { block: 0, warn: 1, info: 2 };
   findings.sort((a, b) => order[a.severity] - order[b.severity]);
 
-  if (findings.length) {
-    console.log("");
-    for (const f of findings) {
-      const s = SEV[f.severity];
-      const head = `  ${paint(s.mark, s.color)} ${paint(f.category, C.cyan)} · ${f.title}`;
-      console.log(head);
-      console.log(`      ${paint(f.file + ":" + f.line, C.bold)}  ${paint("[verified]", C.green)}  ${paint("rule " + f.ruleId, C.dim)}`);
-      if (f.snippet) console.log(paint("      " + f.snippet.slice(0, 100), C.dim));
-    }
-  } else {
-    console.log(paint("\n  No deterministic findings. ✓", C.green));
-  }
-
-  // Impact summary
-  const byCat = {};
-  for (const f of findings) byCat[f.category] = (byCat[f.category] || 0) + 1;
   const blocks = findings.filter((f) => f.severity === "block").length;
   const warns = findings.filter((f) => f.severity === "warn").length;
-  console.log(paint("\n  Impact", C.bold));
-  const cats = Object.keys(byCat);
-  if (cats.length) for (const c of cats) console.log(`    ${c}: ${byCat[c]}`);
-  else console.log(paint("    nothing flagged by the deterministic rules", C.dim));
-  console.log(paint(`\n  ${blocks} block · ${warns} warn`, C.bold));
+  const infos = findings.filter((f) => f.severity === "info").length;
+
+  // Headline the reader sees first.
+  const summary = [blocks ? paint(`🔴 ${blocks} blocking`, C.red) : paint("✓ 0 blocking", C.green)];
+  if (warns) summary.push(paint(`🟡 ${warns} to review`, C.yellow));
+  if (infos) summary.push(paint(`⚪ ${infos} note(s)`, C.gray));
+  console.log("\n  " + summary.join("    "));
+
+  // Findings, grouped by severity, each with a plain-language risk line.
+  const EMO = { block: "🔴", warn: "🟡", info: "⚪" };
+  const GROUPS = [
+    ["block", "Must fix", "fix before you ship"],
+    ["warn", "To review", "confirm these are intended"],
+    ["info", "Notes", "minor"],
+  ];
+  for (const [sev, label, tag] of GROUPS) {
+    const g = findings.filter((f) => f.severity === sev);
+    if (!g.length) continue;
+    console.log(paint(`\n  ${label}`, C.bold) + paint("  ─ " + tag, C.dim));
+    for (const f of g) {
+      console.log(`    ${EMO[f.severity]} ${paint(f.category, C.cyan)} · ${f.title}`);
+      console.log(`       ${paint(f.file + ":" + f.line, C.bold)}  ${paint("· verified", C.green)}`);
+      if (f.why) console.log(paint(`       ↳ ${f.why}`, C.dim));
+      if (sev === "block" && f.snippet) console.log(paint(`         ${f.snippet.slice(0, 72)}`, C.gray));
+    }
+  }
+
+  if (!findings.length) {
+    console.log(paint(`\n  Nothing flagged across ${parsed.length} ${opts.all ? "files" : "changed file(s)"}. ✓`, C.green));
+  }
+
+  // Verdict — a one-line answer, not a list to decode.
+  console.log(paint("\n  " + RULE, C.dim));
+  if (blocks) {
+    console.log("  " + paint(`Verdict: ${blocks} blocking issue${blocks > 1 ? "s" : ""} — fix before you ship.`, C.red));
+  } else if (warns || infos) {
+    console.log("  " + paint("Verdict: clear to ship", C.green) + paint(` · ${warns + infos} advisory item${warns + infos > 1 ? "s" : ""} worth a look.`, C.dim));
+  } else {
+    console.log("  " + paint("Verdict: clear — nothing flagged. ✓", C.green));
+  }
+  if (opts.all) console.log(paint("  Scoring/value surface → pointsman tests --inventory", C.dim));
 
   // The optional semantic (LLM) layer — opt-in with --llm + your own key.
   const llmRules = RULES.filter((r) => r.mode === "llm");
