@@ -2,13 +2,14 @@
 /**
  * tests.js — `pointsman tests`
  *
- * The living-QA pillar. Zero-dep scaffold:
- *   • seeds a human-readable test sheet (pointsman-tests.csv) if missing;
- *   • reads the current diff and reports which areas likely need case review,
- *     anchored to the review findings.
+ * The living-QA pillar. Zero-dep:
+ *   • keeps a human-readable test sheet (pointsman-tests.csv) present + headed;
+ *   • from the diff (or the whole project with --inventory) seeds a TODO row per
+ *     risk area, so the sheet is a usable checklist, not an empty file;
+ *   • tells you which areas need cases.
  *
- * Generating and rewriting cases from a change is the model's job (the optional
- * LLM layer) — this layer keeps the sheet present and tells you where it drifts.
+ * Writing the case *body* (steps + expected result) from intent is the model's
+ * job (--llm, or your agent) — this layer scaffolds the rows and keeps them anchored.
  */
 const fs = require("fs");
 const path = require("path");
@@ -22,37 +23,90 @@ const paint = (s, c) => (process.stdout.isTTY ? c + s + C.reset : s);
 const SHEET = "pointsman-tests.csv";
 const HEADER =
   "ID,Area,Title,Preconditions,Steps,Expected Result,Priority,Anchor (code/rule),Status,Source,Confidence,Last Updated";
+const PRIORITY = { block: "High", warn: "Medium", info: "Low" };
+
+function csvField(s) {
+  s = String(s == null ? "" : s);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+/** Ensure the sheet exists and starts with the header. Returns { created, rows }. */
+function ensureSheet(sheetPath) {
+  let content = "";
+  try { content = fs.readFileSync(sheetPath, "utf8"); } catch { /* missing */ }
+  if (!content.trim()) {
+    fs.writeFileSync(sheetPath, HEADER + "\n", "utf8");
+    return { created: true, rows: 0 };
+  }
+  // A non-empty file that somehow lost its header gets it back (rows preserved).
+  if (content.split("\n")[0].trim() !== HEADER) {
+    content = HEADER + "\n" + content;
+    fs.writeFileSync(sheetPath, content, "utf8");
+  }
+  const rows = content.split("\n").filter((l) => l.trim() && l.trim() !== HEADER).length;
+  return { created: false, rows };
+}
+
+/** Append a TODO stub row per new risk anchor (deduped). Returns the number added. */
+function seedStubs(sheetPath, findings) {
+  let content = "";
+  try { content = fs.readFileSync(sheetPath, "utf8"); } catch { content = HEADER + "\n"; }
+  const today = new Date().toISOString().slice(0, 10);
+  let seq = content.split("\n").filter((l) => l.trim() && l.trim() !== HEADER).length;
+  const seen = new Set();
+  const rows = [];
+  for (const f of findings) {
+    const anchor = `${f.file}:${f.line}`;
+    if (seen.has(anchor)) continue;
+    seen.add(anchor);
+    if (content.includes(anchor)) continue; // already covered in the sheet
+    seq += 1;
+    rows.push([
+      "TC-" + String(seq).padStart(3, "0"),
+      f.category,
+      "Cover: " + f.title,
+      "", "", "",                           // Preconditions, Steps, Expected — you / the model fill these
+      PRIORITY[f.severity] || "Medium",
+      `${anchor} (${f.ruleId})`,
+      "TODO", "pointsman", "",              // Status, Source, Confidence
+      today,
+    ].map(csvField).join(","));
+  }
+  if (rows.length) {
+    if (!content.endsWith("\n")) content += "\n";
+    fs.appendFileSync(sheetPath, rows.join("\n") + "\n", "utf8");
+  }
+  return rows.length;
+}
+
+function reportSeed(added) {
+  if (added) {
+    console.log("  " + paint(`+ ${added} TODO row(s)`, C.green) + paint("  into " + SHEET + " — fill Steps/Expected, or let a model draft them.", C.dim));
+  } else {
+    console.log(paint("  No new rows — every flagged area is already in the sheet.", C.dim));
+  }
+}
 
 function tests(cwd, argv) {
   const inventory = (argv || []).some((a) => a === "--inventory" || a === "--all");
   const sheetPath = path.join(cwd, SHEET);
   console.log(paint("\npointsman tests", C.bold) + paint("  " + sheetPath, C.dim));
 
-  // 1. Seed the sheet if it doesn't exist.
-  if (!fs.existsSync(sheetPath)) {
-    fs.writeFileSync(sheetPath, HEADER + "\n", "utf8");
-    console.log("  " + paint("+ created", C.green) + "  " + SHEET + paint("  (header only — add your cases)", C.dim));
-  } else {
-    const rows = fs.readFileSync(sheetPath, "utf8").split("\n").filter((l) => l.trim()).length - 1;
-    console.log("  " + paint("• found  ", C.dim) + "  " + SHEET + paint(`  (${Math.max(rows, 0)} case(s))`, C.dim));
-  }
+  const sheet = ensureSheet(sheetPath);
+  if (sheet.created) console.log("  " + paint("+ created", C.green) + "  " + SHEET + paint("  (header ready)", C.dim));
+  else console.log("  " + paint("• found  ", C.dim) + "  " + SHEET + paint(`  (${sheet.rows} case(s))`, C.dim));
 
-  // Inventory mode: map the whole project's test surface, not just the diff.
-  if (inventory) {
-    return surface(cwd, isGitRepo(cwd));
-  }
+  if (inventory) return surface(cwd, isGitRepo(cwd), sheetPath);
 
-  // 2. If in a repo, map the current change to areas that need case review.
   if (!isGitRepo(cwd)) {
-    console.log(paint("\n  Not a git repo — skipping drift check.\n", C.dim));
+    console.log(paint("\n  Not a git repo — pass --inventory to map the whole folder.\n", C.dim));
     return;
   }
 
   let parsed = [];
   try { parsed = parseDiff(collectDiff(cwd, {})); } catch { /* ignore */ }
-
   if (!parsed.length) {
-    console.log(paint("\n  No changes — the sheet is up to date for the current diff.\n", C.dim));
+    console.log(paint("\n  No changes — nothing new to add for the current diff.\n", C.dim));
     return;
   }
 
@@ -66,23 +120,21 @@ function tests(cwd, argv) {
       const key = f.category + "|" + f.file;
       if (seen.has(key)) continue;
       seen.add(key);
-      console.log(`    ${paint(f.category, C.cyan)}  ${f.file}:${f.line}  ${paint("→ review cases anchored here (rule " + f.ruleId + ")", C.dim)}`);
+      console.log(`    ${paint(f.category, C.cyan)}  ${f.file}:${f.line}  ${paint("(rule " + f.ruleId + ")", C.dim)}`);
     }
+    console.log("");
+    reportSeed(seedStubs(sheetPath, findings));
   } else {
-    const files = parsed.map((p) => p.file);
-    console.log(paint(`    ${files.length} file(s) changed; no rule-flagged areas. Spot-check cases for:`, C.dim));
-    for (const f of files.slice(0, 10)) console.log(paint("      " + f, C.dim));
+    console.log(paint(`    ${parsed.length} file(s) changed; no rule-flagged areas — spot-check by hand.`, C.dim));
   }
-
-  console.log(paint("\n  Generating / rewriting cases from the change needs the optional model layer.", C.dim));
-  console.log(paint("  Edit " + SHEET + " by hand for now, or wire a model to keep it in sync.\n", C.dim));
+  console.log(paint("\n  Case bodies (steps + expected) need the model layer: ", C.dim) + paint("pointsman review --llm", C.cyan) + paint(", or your agent.\n", C.dim));
 }
 
 /**
- * Whole-project test surface: every reviewable file is an area that needs cases,
- * with the ones touching value / failure / secret paths pulled to the top.
+ * Whole-project test surface: risk files first, and a TODO row seeded for each
+ * so the sheet opens as a real checklist.
  */
-function surface(cwd, isRepo) {
+function surface(cwd, isRepo, sheetPath) {
   let parsed = [];
   try { parsed = collectProject(cwd, isRepo); } catch { /* ignore */ }
   if (!parsed.length) {
@@ -104,14 +156,15 @@ function surface(cwd, isRepo) {
       const cats = [...new Set(byFile[file].map((x) => x.category))].join(", ");
       console.log(`    ${paint(file, C.cyan)}  ${paint("→ " + cats, C.dim)}`);
     }
+    console.log("");
+    reportSeed(seedStubs(sheetPath, findings));
+  } else {
+    console.log(paint("\n  No rule-flagged risk areas — nothing to seed.", C.dim));
   }
 
   const rest = parsed.map((p) => p.file).filter((f) => !byFile[f]);
-  console.log(paint(`\n  ${rest.length} more file(s) need baseline cases:`, C.dim));
-  for (const f of rest.slice(0, 40)) console.log(paint("      " + f, C.dim));
-  if (rest.length > 40) console.log(paint(`      … and ${rest.length - 40} more`, C.dim));
-
-  console.log(paint("\n  Writing the actual cases needs the model layer: ", C.dim) + paint("pointsman review --llm", C.cyan) + paint(" (your key), or let your agent draft them from this surface.\n", C.dim));
+  console.log(paint(`\n  ${rest.length} more file(s) have no flagged risk (baseline cases are yours to add).`, C.dim));
+  console.log(paint("\n  Case bodies (steps + expected) need the model layer: ", C.dim) + paint("pointsman review --llm", C.cyan) + paint(", or your agent.\n", C.dim));
 }
 
 module.exports = { tests };
