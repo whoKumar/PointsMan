@@ -31,6 +31,7 @@ const MAX_BYTES = 512 * 1024; // skip files bigger than this — not worth scann
 function listFilesGit(cwd) {
   const out = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
     cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "ignore"],
   });
   return out.split("\n").filter(Boolean);
 }

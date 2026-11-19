@@ -11,6 +11,9 @@
  */
 const fs = require("fs");
 const path = require("path");
+const { collectProject } = require("./scan");
+const { loadRules, runDeterministic } = require("./rules");
+const { isGitRepo } = require("./diff");
 
 const exists = (p) => { try { fs.accessSync(p); return true; } catch { return false; } };
 const read = (p) => { try { return fs.readFileSync(p, "utf8"); } catch { return ""; } };
@@ -60,16 +63,29 @@ function runChecks(dir) {
       : "add the agent manual first",
   });
 
-  // 3. Secrets are kept out of git.
+  // 3. Secrets are kept out of the source — the .gitignore config AND a real scan.
+  //    A green .gitignore says nothing about a key hardcoded in a tracked file, so we
+  //    run the same secret detector `review` uses; the two can never disagree.
   const gi = read(path.join(dir, ".gitignore"));
   const ignoresEnv = /(^|\n)\s*\.env/.test(gi);
   const ignoresNodeModules = /(^|\n)\s*node_modules/.test(gi);
   const strayEnv = exists(path.join(dir, ".env")) && !ignoresEnv;
+  const giOk = !!gi && ignoresEnv && ignoresNodeModules && !strayEnv;
+  let secretHit = null;
+  try {
+    const parsed = collectProject(dir, isGitRepo(dir));
+    const cfg = loadRules(dir, fs, path);
+    const hits = runDeterministic(parsed, cfg, { whole: true })
+      .filter((f) => f.ruleId === "no-hardcoded-secrets");
+    if (hits.length) secretHit = hits[0];
+  } catch { /* scan is best-effort — the config check still stands on its own */ }
   results.push({
-    name: "Secrets kept out of git (.gitignore covers .env & node_modules)",
+    name: "Secrets kept out of source (.env ignored · no hardcoded keys)",
     level: "required",
-    pass: !!gi && ignoresEnv && ignoresNodeModules && !strayEnv,
-    detail: !gi
+    pass: giOk && !secretHit,
+    detail: secretHit
+      ? `hardcoded secret in ${secretHit.file}:${secretHit.line} — remove it and rotate the key`
+      : !gi
       ? "no .gitignore"
       : strayEnv
       ? "a .env file exists but is not git-ignored"

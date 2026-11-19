@@ -9,7 +9,12 @@ const { execFileSync } = require("child_process");
 
 /** Run a git command, returning stdout (""+trimmed) or throwing on failure. */
 function git(cwd, args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  // stdio: keep stdout piped (we return it); silence stderr so a "not a git repo"
+  // or similar never leaks to the user's terminal — callers handle the throw.
+  return execFileSync("git", args, {
+    cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
 }
 
 function isGitRepo(cwd) {
