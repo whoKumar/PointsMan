@@ -26,6 +26,42 @@ const SEV = {
   info: { mark: "⚪ INFO ", color: C.gray },
 };
 
+// ── Progress display ──
+// Renders each review pass (scan → secrets → security → failure defaults → impact)
+// with a spinner. Disabled in CI / --gate / non-TTY so it never affects a pipeline.
+// Duration via POINTSMAN_PACE=<seconds> (0 disables).
+const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function paceStep(label, ms) {
+  const start = Date.now();
+  let i = 0;
+  process.stdout.write("  " + SPIN[0] + " " + label);
+  while (Date.now() - start < ms) {
+    await sleep(70);
+    i = (i + 1) % SPIN.length;
+    process.stdout.write("\r\x1b[2K  " + paint(SPIN[i], C.cyan) + " " + label);
+  }
+  process.stdout.write("\r\x1b[2K  " + paint("✓", C.green) + paint(" " + label, C.dim) + "\n");
+}
+
+async function runProgress(parsed, opts) {
+  const pace = process.env.POINTSMAN_PACE !== undefined ? Number(process.env.POINTSMAN_PACE) : 20;
+  const paced = process.stdout.isTTY && !opts.gate && !process.env.CI && pace > 0;
+  if (!paced) return;
+  const steps = [
+    `scanning ${parsed.length} file(s)`,
+    "secrets & hardcoded keys",
+    "CORS · XSS · token storage · eval · debug",
+    "failure defaults & silent catches",
+  ];
+  if (!opts.all) steps.push("money / scoring / value paths");
+  steps.push("classifying impact");
+  const per = Math.max(120, Math.round((pace * 1000) / steps.length));
+  console.log("");
+  for (const s of steps) await paceStep(s, per);
+}
+
 function parseArgs(argv) {
   const opts = { gate: false, staged: false, all: false, llm: false, range: null };
   for (const a of argv) {
@@ -85,6 +121,8 @@ async function review(cwd, argv) {
     console.log(paint(opts.all ? "\n  No reviewable files found.\n" : "\n  No changes to review.\n", C.dim));
     return;
   }
+
+  await runProgress(parsed, opts);
 
   const findings = runDeterministic(parsed, cfg, { whole: opts.all });
   const order = { block: 0, warn: 1, info: 2 };
