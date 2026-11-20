@@ -14,6 +14,7 @@
     "examples"
   ],
   "scripts": {
+    "test": "node --test",
     "check": "node bin/pointsman.js check",
     "review": "node bin/pointsman.js review",
     "tests": "node bin/pointsman.js tests"
